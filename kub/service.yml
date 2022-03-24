@@ -1,0 +1,16 @@
+# Esse é um template, as variaveis serão substituidas nos workflows dentro da pasta .github
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: ${KUB_NAME}
+  namespace: ${NODE_ENV}
+spec:
+  type: NodePort
+  ports:
+  - port: 80
+    targetPort: 6081
+    protocol: TCP
+    name: http
+  selector:
+    app: ${KUB_NAME}

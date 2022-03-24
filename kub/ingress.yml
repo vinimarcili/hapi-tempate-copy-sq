@@ -1,0 +1,21 @@
+# Esse é um template, as variaveis serão substituidas nos workflows dentro da pasta .github
+
+apiVersion: extensions/v1beta1
+kind: Ingress
+metadata:
+  name: ${KUB_NAME}
+  namespace: ${NODE_ENV}
+  annotations:
+    kubernetes.io/ingress.class: "nginx"
+spec:
+  tls:
+    - secretName: tls-secret
+    - hosts:
+      - ${INGRESS_DOMAIN}
+  rules:
+  - host: ${INGRESS_DOMAIN}
+    http:
+      paths:
+      - backend:
+          serviceName: ${KUB_NAME}
+          servicePort: 80

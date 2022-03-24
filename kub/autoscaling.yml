@@ -1,0 +1,15 @@
+# Esse é um template, as variaveis serão substituidas nos workflows dentro da pasta .github
+
+apiVersion: autoscaling/v1
+kind: HorizontalPodAutoscaler
+metadata:
+  name: ${KUB_NAME}
+  namespace: ${NODE_ENV}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1beta1
+    kind: Deployment
+    name: ${KUB_NAME}
+  minReplicas: ${REPLICA_COUNT}
+  maxReplicas: 3 # ---> Preencher (esse número não pode ser menor que o número de replicas no deployment)
+  targetCPUUtilizationPercentage: 60

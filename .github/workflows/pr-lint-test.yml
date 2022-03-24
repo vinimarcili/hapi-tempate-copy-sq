@@ -1,0 +1,60 @@
+# Aqui estão as instruções para lint e teste no Github Actions
+# Dar atenção nos comentários com # -->
+# e mudar as envs para projetos novos
+
+name: PR - Lint and Test
+
+on: 
+  pull_request:
+    branches:
+      - master
+      - release
+
+env:
+  PROJECT_ID: squid-apis
+  NODE_ENV: staging
+  GKE_CLUSTER: ${{ secrets.GKE_CLUSTER_NAME }}
+  GKE_ZONE: ${{ secrets.GCE_CLUSTER_ZONE }}
+  KUB_PREFIX: mudar_aqui # ---> Preencher
+
+jobs:
+  lint-test:
+    name: Lint and Test
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v2
+    - uses: actions/setup-node@v2
+      with:
+        node-version: '14'
+    - name: Install
+      run: npm install
+
+    # Define as variáveis usadas nos steps adiante    
+    - name: Set Kub name
+      run: echo "KUB_NAME=$KUB_PREFIX-stg" >> $GITHUB_ENV
+
+    # Setup gcloud CLI
+    - uses: google-github-actions/setup-gcloud@v0.2.0
+      with:
+        service_account_key: ${{ secrets.GCP_KEY_JSON }}
+        project_id: ${{ env.PROJECT_ID }}
+
+    # Get the GKE credentials so we can deploy to the cluster
+    - uses: google-github-actions/get-gke-credentials@v0.2.1
+      with:
+        cluster_name: ${{ env.GKE_CLUSTER }}
+        location: ${{ env.GKE_ZONE }}
+        credentials: ${{ secrets.GCP_KEY_JSON }}
+    
+    # ---> LINT e TESTE (Preencher de acordo com o projeto)
+    # - name: Lint
+    #   run: npm run lint
+    - name: Export Configmap envs and Run Test
+      run: |-
+        source ./kub/envs/export-envs-configmap.sh squid-envs ${{ env.NODE_ENV }}
+        source ./kub/envs/export-envs-configmap.sh ${{ env.KUB_NAME }} ${{ env.NODE_ENV }}
+        export NODE_ENV="test"
+        npm run test
+    # <--- LINT e TESTE (Preencher de acordo com o projeto)

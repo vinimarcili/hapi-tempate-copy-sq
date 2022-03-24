@@ -1,0 +1,81 @@
+# Esse é um template, as variaveis serão substituidas nos workflows dentro da pasta .github
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ${KUB_NAME}
+  namespace: ${NODE_ENV}
+  labels:
+    app: ${KUB_NAME}
+    version: ${IMAGE_TAG}
+    commit: "${GIT_COMMIT}"
+    type: api # --> Preencher api, job, worker ou web
+spec:
+  replicas: ${REPLICA_COUNT} # ---> Preencher (para APIs mais críticas o ideal é ter mais instâncias)
+  minReadySeconds: 10
+  strategy:
+    rollingUpdate: # Importante para definir um deploy com menor downtime
+      maxSurge: 1
+      maxUnavailable: 0
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      app: ${KUB_NAME}
+  template:
+    metadata:
+      name: ${KUB_NAME}
+      labels:
+        app: ${KUB_NAME}
+        version: ${IMAGE_TAG}
+        commit: "${GIT_COMMIT}"
+    spec:
+      imagePullSecrets:
+        - name: gcr-json-key
+      containers:
+      - name: ${KUB_NAME}
+        image: ${GCR_IMAGE}
+        resources:
+          limits:
+            memory: "2000Mi"
+            cpu: 200m
+        envFrom:
+        - secretRef:
+            name: squid-secrets
+        - configMapRef:
+            name: squid-envs
+        - configMapRef:
+            name: ${KUB_NAME}
+        - secretRef: # --> COMENTAR CASO NÃO TENHA OS SECRETS CRIADOS
+            name: ${KUB_NAME} # --> COMENTAR CASO NÃO TENHA OS SECRETS CRIADOS
+        ports:
+          - name: ${KUB_NAME}
+            containerPort: 6081
+            protocol: TCP
+        readinessProbe: # --> Precisa ter endpoint de status (aqui ele só mata o pod antigo quando o novo dá sucesso na rota de status)
+          httpGet:
+            path: /v1/status
+            port: 6081
+          periodSeconds: 15
+          timeoutSeconds: 10
+          successThreshold: 2
+          failureThreshold: 2
+        livenessProbe: # --> Precisa ter endpoint de status (aqui ele restarta o pod se o endpoint falha X vezes)
+          httpGet:
+            path: /v1/status
+            port: 6081
+          initialDelaySeconds: 10
+          failureThreshold: 2
+          periodSeconds: 60
+        volumeMounts: # --> Aponta um volume onde fica o credentials.json (para funcionar precisa criar um secret com o credential.json)
+          - mountPath: /pipeline/secret
+            name: credentials
+            readOnly: true
+      # É necessário criar uma Secret no Lens com o `${nome_da_api}-credentials`.
+      # Exemplo: bat-credentials, daken-credentials, go-credentials, ...
+      # O nome da data da Secret deve ser credentials.json
+      # Nesse Secret, deve ser coloca todo o conteúdo do arquivo credentials.json que utilizamos atualmente nos projetos
+      volumes: # --> Cria um volume onde fica o credentials.json (para funcionar precisa criar um secret com o credential.json)
+        - name: credentials
+          secret:
+            secretName: ${KUB_PREFIX}-credentials
+            defaultMode: 0644

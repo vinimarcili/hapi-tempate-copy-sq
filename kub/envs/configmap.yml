@@ -1,0 +1,11 @@
+# Esse é um template, as variaveis serão substituidas nos workflows dentro da pasta .github
+# As demais envs terão que ser incluidas direto no kubectl
+# Esse arquivo só será criado no kubernetes se não existir algum para não substituir as envs já em uso
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ${KUB_NAME}
+  namespace: ${NODE_ENV}
+data:
+  NODE_ENV: "${NODE_ENV}"

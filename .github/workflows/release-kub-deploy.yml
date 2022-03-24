@@ -1,0 +1,130 @@
+# Aqui estão as instruções para build e deploy no Github Actions e Kubernetes
+# Dar atenção nos comentários com # -->
+# e mudar as envs para projetos novos
+
+name: Release - Build and Deploy to GKE
+
+on:
+  push:
+    branches:
+      - release
+
+env:
+  PROJECT_ID: squid-apis
+  NODE_ENV: staging
+  GKE_CLUSTER: ${{ secrets.GKE_CLUSTER_NAME }}
+  GKE_ZONE: ${{ secrets.GCE_CLUSTER_ZONE }}
+  REPO_NAME: ${{ github.repository }}
+  DOMAIN: mudar_aqui.squidit.com.br # ---> Preencher (Dominio em PROD, para stg e dev vai ser adicionado o prefixo stg- e dev-)
+  KUB_PREFIX: mudar_aqui # ---> Preencher (O nome dos recursos vão fica KUB_PREFIX-ENV, exemplo: wcrm-prd)
+  REPLICA_COUNT: 1
+
+jobs:
+  test-build-deploy:
+    name: Lint, Test, Build and Deploy
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v2
+    - uses: actions/setup-node@v2
+      with:
+        node-version: '14'
+    - name: Install
+      run: npm install
+
+    # Define as variáveis usadas nos steps adiante
+    - name: Set GCR image tag
+      run: echo "PACKAGE_VERSION=$(node -p "require('./package.json').version")" >> $GITHUB_ENV
+    - run: echo "GIT_COMMIT=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
+    - run: echo "IMAGE_TAG=$PACKAGE_VERSION-$GIT_COMMIT" >> $GITHUB_ENV
+    - run: echo "GCR_IMAGE=gcr.io/${{ env.PROJECT_ID }}/squidit/${{ env.REPO_NAME }}:${{ env.IMAGE_TAG }}" >> $GITHUB_ENV
+
+    - name: Set Kub name
+      run: echo "KUB_NAME=$KUB_PREFIX-stg" >> $GITHUB_ENV
+
+    # ---> Define dominio ingress (só para APIs, jobs e workers não precisam)
+    - name: Set GCR image tag
+      run: echo "INGRESS_DOMAIN=stg-$DOMAIN" >> $GITHUB_ENV
+    # <--- Define dominio ingress
+
+    # Setup gcloud CLI
+    - uses: google-github-actions/setup-gcloud@v0.2.0
+      with:
+        service_account_key: ${{ secrets.GCP_KEY_JSON }}
+        project_id: ${{ env.PROJECT_ID }}
+
+    # Get the GKE credentials so we can deploy to the cluster
+    - uses: google-github-actions/get-gke-credentials@v0.2.1
+      with:
+        cluster_name: ${{ env.GKE_CLUSTER }}
+        location: ${{ env.GKE_ZONE }}
+        credentials: ${{ secrets.GCP_KEY_JSON }}
+    
+    # ---> LINT e TESTE (Preencher de acordo com o projeto)
+    # - name: Lint
+    #   run: npm run lint
+    - name: Export Configmap envs and Run Test
+      run: |-
+        source ./kub/envs/export-envs-configmap.sh squid-envs ${{ env.NODE_ENV }}
+        source ./kub/envs/export-envs-configmap.sh ${{ env.KUB_NAME }} ${{ env.NODE_ENV }}
+        export NODE_ENV="test"
+        npm run test
+    # <--- LINT e TESTE (Preencher de acordo com o projeto)
+
+    # --> Não precisa desse step se não tiver credentials do GCP
+    # Cria um link simbólico para o projecto acessar o credentials.json (para funcionar precisa criar um secret com o credential.json)
+    - name: Create simbolic link to credentials.json
+      run: ln -s ../secret/credentials.json ./credentials.json
+
+    # Configure Docker to use the gcloud command-line tool as a credential
+    # helper for authentication
+    - run: |-
+        gcloud --quiet auth configure-docker
+
+    # Build the Docker image
+    - name: Build
+      run: |-
+        docker build \
+          --tag "${{ env.GCR_IMAGE }}" \
+          --build-arg GITHUB_SHA="$GITHUB_SHA" \
+          --build-arg GITHUB_REF="$GITHUB_REF" \
+          .
+
+    # Push the Docker image to Google Container Registry
+    - name: Publish
+      env:
+        timeout-minutes: 1 # ---> Reparei que esse comando às vezes trava e demora mais de 10 min, então coloco um limite para parar o job
+      run: |-
+        docker push "${{ env.GCR_IMAGE }}"
+
+    # Aqui ele aplica 1 replica se não for ambiente de prod, senão aplica o numero de replicas desejado
+    - name: Define replica count
+      run: |-
+        if [ "${{ github.event.inputs.environment }}" != "prd" ]; then
+          echo "REPLICA_COUNT=1" >> $GITHUB_ENV
+        fi
+
+    # Deploy the Docker image to the GKE cluster, replacing envs
+    - name: Check if ConfigMap exists
+      run: |-
+        RESULT=$(kubectl get configmap -n ${{ env.NODE_ENV }} | grep ${{ env.KUB_NAME }} | wc -l)
+        if [ $RESULT -eq 0 ]; then
+          echo "FILES_TO_APPLY=kub/service.yml kub/deployment.yml kub/ingress.yml kub/autoscaling.yml kub/envs/configmap.yml" >> $GITHUB_ENV
+        elif [ $RESULT -eq 1 ]; then
+          echo "FILES_TO_APPLY=kub/service.yml kub/deployment.yml kub/ingress.yml kub/autoscaling.yml" >> $GITHUB_ENV
+        fi
+    - name: Deploy
+      uses: swdotcom/update-and-apply-kubernetes-configs@v1
+      with:
+        k8-config-file-paths: ${{ env.FILES_TO_APPLY }}
+        replacement-method: defined
+      env:
+        NODE_ENV: ${{ env.NODE_ENV }}
+        IMAGE_TAG: ${{ env.IMAGE_TAG }}
+        GIT_COMMIT: ${{ env.GIT_COMMIT }}
+        GCR_IMAGE: ${{ env.GCR_IMAGE }}
+        INGRESS_DOMAIN: ${{ env.INGRESS_DOMAIN }}
+        KUB_NAME: ${{ env.KUB_NAME }}
+        KUB_PREFIX: ${{ env.KUB_PREFIX }}
+        REPLICA_COUNT: ${{ env.REPLICA_COUNT }}
